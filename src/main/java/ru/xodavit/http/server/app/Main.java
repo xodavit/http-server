@@ -10,7 +10,7 @@ import java.io.IOException;
 public class Main {
     public static void main(String[] args) throws IOException {
         final var server = new HttpServer(9999);
-
+        System.out.println("старт сервера");
         server.autoRegisterHandlers("org.example.http.app");
         server.addArgumentResolver(
                 new RequestHandlerMethodArgumentResolver(),
