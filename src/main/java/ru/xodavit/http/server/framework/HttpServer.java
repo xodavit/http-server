@@ -35,6 +35,10 @@ public class HttpServer {
     // state -> NOT_STARTED, STARTED, STOP, STOPPED
     private volatile boolean isStopped = false;
 
+    public boolean isStopped() {
+        return isStopped;
+    }
+
     // GET, "/search", handler
     private final Map<String, Map<String, HandlerMethod>> routes = new HashMap<>();
     // 404 Not Found ->
