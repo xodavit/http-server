@@ -18,14 +18,14 @@ public class Main {
                 new RequestHeaderHandlerMethodArgumentResolver()
         );
 
-        new Thread(() -> {
-            try {
-                Thread.sleep(10000);
-                server.stop();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }).start();
+//        new Thread(() -> {
+//            try {
+//                Thread.sleep(10000);
+//                server.stop();
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+//        }).start();
 
         server.listen();
     }
