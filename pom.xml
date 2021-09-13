@@ -6,7 +6,7 @@
 
     <groupId>ru.xodavit</groupId>
     <artifactId>http-server</artifactId>
-    <version>1.2.5</version>
+    <version>1.2.6</version>
 
     <properties>
         <maven.compiler.source>16</maven.compiler.source>
