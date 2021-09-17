@@ -7,7 +7,7 @@ import ru.xodavit.http.server.framework.resolver.argument.ResponseHandlerMethodA
 
 import java.io.IOException;
 
-public class Main {
+public class Configure {
     public static void main(String[] args) throws IOException {
         final var server = new HttpServer(9999);
         System.out.println("старт сервера");

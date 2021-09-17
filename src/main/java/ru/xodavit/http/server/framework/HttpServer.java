@@ -114,19 +114,19 @@ public class HttpServer {
     }
 
     public void stop() {
-        log.log(Level.INFO, "server stop..");
+        log.info("command to stop the server received");
         this.isStopped = true;
-        executorService.shutdownNow();
-        log.info("executorService closes...");
+        //executorService.shutdownNow();
         var terminated = executorService.shutdownNow().size();
+        log.info("executorService closes");
         log.info(String.format("%s connections interrupted.", terminated));
         try {
-            log.info("socket closes...");
+            log.info("trying to closes socket");
             serverSocket.close();
         } catch (IOException e) {
             log.severe(e.getMessage());
         }
-        log.info("Server has been stopped :)");
+        log.info("Server has been stopped. Maybe");
     }
 
     public void handle(final Socket socket) {

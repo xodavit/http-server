@@ -59,7 +59,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>ru.xodavit.http.server.app.Main</mainClass>
+                            <mainClass>ru.xodavit.http.server.app.Configure</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>
