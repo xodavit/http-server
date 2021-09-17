@@ -7,7 +7,6 @@ import ru.xodavit.http.server.framework.exception.*;
 import ru.xodavit.http.server.framework.guava.Bytes;
 import ru.xodavit.http.server.framework.resolver.argument.HandlerMethodArgumentResolver;
 
-import javax.net.ServerSocketFactory;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -24,21 +23,15 @@ import java.util.stream.Collectors;
 
 @Log
 public class HttpServer {
-
     private static final byte[] CRLF = new byte[]{'\r', '\n'};
     private static final byte[] CRLFCRLF = new byte[]{'\r', '\n', '\r', '\n'};
     private final static int headersLimit = 4096;
     private final static long bodyLimit = 10 * 1024 * 1024;
-
-    private final ServerSocket serverSocket;
-    private final ExecutorService executorService;
-    // state -> NOT_STARTED, STARTED, STOP, STOPPED
-    private volatile boolean isStopped = false;
-
-    public boolean isStopped() {
-        return isStopped;
-    }
-
+    private final ExecutorService executorService = Executors.newFixedThreadPool(64, r -> {
+        final var thread = new Thread(r);
+        thread.setDaemon(true);
+        return thread;
+    });
     // GET, "/search", handler
     private final Map<String, Map<String, HandlerMethod>> routes = new HashMap<>();
     // 404 Not Found ->
@@ -83,29 +76,70 @@ public class HttpServer {
     };
     private final List<HandlerMethodArgumentResolver> argumentResolvers = new ArrayList<>();
 
+    // state -> NOT_STARTED, STARTED, STOP, STOPPED
+    private volatile boolean isStopped = false;
 
-    public HttpServer(ServerSocketFactory socketFactory, int port) throws IOException {
-        this.serverSocket = socketFactory.createServerSocket(port);
-        //this.executorService = Executors.newFixedThreadPool(64);
-        this.executorService = Executors.newFixedThreadPool(64, r -> {
-            final var thread = new Thread(r);
-            thread.setDaemon(true);
-            return thread;
-        });
+    public void get(String path, Handler handler) {
+        registerHandler(HttpMethods.GET, path, handler);
     }
-    public HttpServer(int port) throws IOException {
-        this(ServerSocketFactory.getDefault(), port);
+
+    public void post(String path, Handler handler) {
+        registerHandler(HttpMethods.POST, path, handler);
     }
-//    public HttpServer() {
-//    }
 
+    public void autoRegisterHandlers(String pkg) {
+        try (final var scanResult = new ClassGraph().enableAllInfo().acceptPackages(pkg).scan()) {
+            for (final var classInfo : scanResult.getClassesWithMethodAnnotation(RequestMapping.class.getName())) {
+                final var handler = classInfo.loadClass().getConstructor().newInstance();
+                for (final var method : handler.getClass().getMethods()) {
+                    if (method.isAnnotationPresent(RequestMapping.class)) {
+                        final RequestMapping mapping = method.getAnnotation(RequestMapping.class);
 
-    public void listen() {
-        log.log(Level.INFO, "server started at port: " + serverSocket.getLocalPort());
+                        final var handlerMethod = new HandlerMethod(handler, method);
+                        Optional.ofNullable(routes.get(mapping.method()))
+                                .ifPresentOrElse(
+                                        map -> map.put(mapping.path(), handlerMethod),
+                                        () -> routes.put(mapping.method(), new HashMap<>(Map.of(mapping.path(), handlerMethod)))
+                                );
+                    }
+                }
+            }
+        } catch (InvocationTargetException | InstantiationException | IllegalAccessException | NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
+    public void registerHandler(String method, String path, Handler handler) {
         try {
+            final var handle = handler.getClass().getMethod("handle", Request.class, OutputStream.class);
+            final var handlerMethod = new HandlerMethod(handler, handle);
+            Optional.ofNullable(routes.get(method))
+                    .ifPresentOrElse(
+                            map -> map.put(path, handlerMethod),
+                            () -> routes.put(method, new HashMap<>(Map.of(path, handlerMethod)))
+                    );
+        } catch (NoSuchMethodException e) {
+            throw new HandlerRegistrationException(e);
+        }
+//    final var map = routes.get(method);
+//    if (map != null) {
+//      map.put(path, handler);
+//      return;
+//    }
+//    routes.put(method, new HashMap<>(Map.of(path, handler)));
+    }
+
+    public void addArgumentResolver(HandlerMethodArgumentResolver... resolvers) {
+        argumentResolvers.addAll(List.of(resolvers));
+    }
+
+    public void listen(int port) {
+        try (
+                final var runningServerSocket = new ServerSocket(port)
+        ) {
+            log.log(Level.INFO, "server started at port: " + runningServerSocket.getLocalPort());
             while (!isStopped && !Thread.currentThread().isInterrupted()) {
-                final var socket = serverSocket.accept();
+                final var socket = runningServerSocket.accept();
                 executorService.submit(() -> handle(socket));
             }
         } catch (IOException e) {
@@ -120,12 +154,12 @@ public class HttpServer {
         var terminated = executorService.shutdownNow().size();
         log.info("executorService closes");
         log.info(String.format("%s connections interrupted.", terminated));
-        try {
-            log.info("trying to closes socket");
-            serverSocket.close();
-        } catch (IOException e) {
-            log.severe(e.getMessage());
-        }
+//        try {
+//            log.info("trying to closes socket");
+//            runningServerSocket.close();
+//        } catch (IOException e) {
+//            log.severe(e.getMessage());
+//        }
         log.info("Server has been stopped. Maybe");
     }
 
@@ -255,61 +289,4 @@ public class HttpServer {
             // TODO:
         }
     }
-
-
-
-    public void get(String path, Handler handler) {
-        registerHandler(HttpMethods.GET, path, handler);
-    }
-
-    public void post(String path, Handler handler) {
-        registerHandler(HttpMethods.POST, path, handler);
-    }
-
-    public void autoRegisterHandlers(String pkg) {
-        try (final var scanResult = new ClassGraph().enableAllInfo().acceptPackages(pkg).scan()) {
-            for (final var classInfo : scanResult.getClassesWithMethodAnnotation(RequestMapping.class.getName())) {
-                final var handler = classInfo.loadClass().getConstructor().newInstance();
-                for (final var method : handler.getClass().getMethods()) {
-                    if (method.isAnnotationPresent(RequestMapping.class)) {
-                        final RequestMapping mapping = method.getAnnotation(RequestMapping.class);
-
-                        final var handlerMethod = new HandlerMethod(handler, method);
-                        Optional.ofNullable(routes.get(mapping.method()))
-                                .ifPresentOrElse(
-                                        map -> map.put(mapping.path(), handlerMethod),
-                                        () -> routes.put(mapping.method(), new HashMap<>(Map.of(mapping.path(), handlerMethod)))
-                                );
-                    }
-                }
-            }
-        } catch (InvocationTargetException | InstantiationException | IllegalAccessException | NoSuchMethodException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    public void registerHandler(String method, String path, Handler handler) {
-        try {
-            final var handle = handler.getClass().getMethod("handle", Request.class, OutputStream.class);
-            final var handlerMethod = new HandlerMethod(handler, handle);
-            Optional.ofNullable(routes.get(method))
-                    .ifPresentOrElse(
-                            map -> map.put(path, handlerMethod),
-                            () -> routes.put(method, new HashMap<>(Map.of(path, handlerMethod)))
-                    );
-        } catch (NoSuchMethodException e) {
-            throw new HandlerRegistrationException(e);
-        }
-//    final var map = routes.get(method);
-//    if (map != null) {
-//      map.put(path, handler);
-//      return;
-//    }
-//    routes.put(method, new HashMap<>(Map.of(path, handler)));
-    }
-
-    public void addArgumentResolver(HandlerMethodArgumentResolver... resolvers) {
-        argumentResolvers.addAll(List.of(resolvers));
-    }
 }
-
