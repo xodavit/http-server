@@ -207,7 +207,6 @@ public class Server {
                 String[] uriParts = requestUri.split("\\?");
 
                 if (uriParts.length > 1) {
-                    log.info("uri has more one param");
                     String uriParams = uriParts[1];
                     for (String param : uriParams.split("&")
                     ) {
