@@ -2,7 +2,7 @@ package ru.xodavit.http.server.framework;
 
 import org.junit.jupiter.api.Test;
 
-class HttpServerTest {
+class ServerTest {
   @Test
   public void should() {
 

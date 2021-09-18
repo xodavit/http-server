@@ -14,6 +14,7 @@ import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -22,11 +23,16 @@ import java.util.logging.Level;
 import java.util.stream.Collectors;
 
 @Log
-public class HttpServer {
+public class Server {
     private static final byte[] CRLF = new byte[]{'\r', '\n'};
     private static final byte[] CRLFCRLF = new byte[]{'\r', '\n', '\r', '\n'};
     private final static int headersLimit = 4096;
     private final static long bodyLimit = 10 * 1024 * 1024;
+
+    // state -> NOT_STARTED, STARTED, STOP, STOPPED
+    private volatile boolean isStopped = false;
+
+    private ServerSocket runningServerSocket;
     private final ExecutorService executorService = Executors.newFixedThreadPool(64, r -> {
         final var thread = new Thread(r);
         thread.setDaemon(true);
@@ -76,9 +82,9 @@ public class HttpServer {
     };
     private final List<HandlerMethodArgumentResolver> argumentResolvers = new ArrayList<>();
 
-    // state -> NOT_STARTED, STARTED, STOP, STOPPED
-    private volatile boolean isStopped = false;
 
+    ////////////////
+    //FIXME: можно ли удалить эти методы? get, post
     public void get(String path, Handler handler) {
         registerHandler(HttpMethods.GET, path, handler);
     }
@@ -87,6 +93,7 @@ public class HttpServer {
         registerHandler(HttpMethods.POST, path, handler);
     }
 
+    ////////////////
     public void autoRegisterHandlers(String pkg) {
         try (final var scanResult = new ClassGraph().enableAllInfo().acceptPackages(pkg).scan()) {
             for (final var classInfo : scanResult.getClassesWithMethodAnnotation(RequestMapping.class.getName())) {
@@ -154,12 +161,19 @@ public class HttpServer {
         var terminated = executorService.shutdownNow().size();
         log.info("executorService closes");
         log.info(String.format("%s connections interrupted.", terminated));
-//        try {
-//            log.info("trying to closes socket");
-//            runningServerSocket.close();
-//        } catch (IOException e) {
-//            log.severe(e.getMessage());
-//        }
+        try {
+
+            if (runningServerSocket != null) {
+                log.info("trying to closes socket");
+                runningServerSocket.close();
+                log.info("socket closed successfully");
+            }
+
+        } catch (IOException e) {
+            this.isStopped = false;
+            log.severe(e.getMessage());
+            throw new ServerException(e);
+        }
         log.info("Server has been stopped. Maybe");
     }
 
@@ -186,9 +200,28 @@ public class HttpServer {
                     throw new MalformedRequestException("request line must contains 3 parts");
                 }
 
-                final var method = requestLineParts[0];
-                // TODO: uri split ? -> URLDecoder
-                final var uri = requestLineParts[1];
+                final var requestMethod = requestLineParts[0];
+                final var requestUri = requestLineParts[1];
+
+                final Map<String, List<String>> query = new HashMap<>();
+                String[] uriParts = requestUri.split("\\?");
+
+                if (uriParts.length > 1) {
+                    log.info("uri has more one param");
+                    String uriParams = uriParts[1];
+                    for (String param : uriParams.split("&")
+                    ) {
+                        String uriPair[] = param.split("=");
+                        String key = URLDecoder.decode(uriPair[0], StandardCharsets.UTF_8);
+                        String value = "";
+                        if (uriPair.length > 1) {
+                            value = URLDecoder.decode(uriPair[1], StandardCharsets.UTF_8);
+                        }
+                        List<String> uriValues = Optional.ofNullable(query.get(key))
+                                .orElse(query.put(key, new ArrayList<>()));
+                        uriValues.add(value);
+                    }
+                }
 
                 final var headersEndIndex = Bytes.indexOf(buffer, CRLFCRLF, requestLineEndIndex, read) + CRLFCRLF.length;
                 if (headersEndIndex == 3) {
@@ -225,11 +258,28 @@ public class HttpServer {
                 in.skipNBytes(headersEndIndex);
                 final var body = in.readNBytes(contentLength);
 
-                // TODO: annotation monkey
+                final var contentType = headers.getOrDefault("Content-Type",
+                        "application/x-www-form-urlencoded");
+                final Map<String, List<String>> form = new HashMap<>();
+
+                if (contentType.equalsIgnoreCase("application/x-www-form-urlencoded")) {
+                    String contentParam = URLDecoder.decode(new String(body), StandardCharsets.UTF_8);
+
+                    for (String pair : contentParam.split("&")) {
+
+                        if (!form.containsKey(pair.split("=")[0])) {
+                            form.put(pair.split("=")[0], new ArrayList<>());
+                        }
+                        form.get(pair.split("=")[0]).add(pair.split("=")[1]);
+                    }
+                }
+
                 final var request = Request.builder()
-                        .method(method)
-                        .path(uri)
+                        .method(requestMethod)
+                        .path(requestUri)
                         .headers(headers)
+                        .query(query)
+                        .form(form)
                         .body(body)
                         .build();
 

@@ -15,7 +15,7 @@ public class SimpleHandler {
       OutputStream response,
       @RequestHeader("Username") String username
   ) {
-    final var body = "{\"courses\": []}";
+    final var body = "{\"courses\": [java, go]}";
     try {
       response.write(
           (
